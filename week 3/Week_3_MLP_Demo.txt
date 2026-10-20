@@ -1,0 +1,779 @@
+# -*- coding: utf-8 -*-
+"""COM4573_Week3_MLP_Demo.ipynb
+
+# -*- coding: utf-8 -*-
+"""COM4573 - Artificial Neural Networks
+Week 3 Live Demo: Why Do We Need a Hidden Layer?
+
+Ankara University, Department of Computer Engineering
+Instructor: Dr. Hilal Akarkamçı
+
+Learning goals:
+- create and visualize a nonlinear classification problem,
+- see why one linear decision boundary is insufficient,
+- compare a Perceptron with a small MLP,
+- inspect the architecture and parameter count of an MLP,
+- connect code to forward propagation,
+- visualize the decision regions learned by the network,
+- inspect hidden-layer activations for individual samples,
+- explore how hidden-layer width changes model capacity.
+"""
+
+# %% [markdown]
+# # COM4573 - Artificial Neural Networks
+# ## Week 3: Multilayer Perceptron Demo
+#
+# Main question:
+# How can several simple neurons solve a problem that one perceptron cannot?
+#
+# Today we will use a nonlinear dataset instead of Iris.
+#
+
+# %% [markdown]
+# ## 1. Imports
+#
+# We need:
+# - NumPy for numerical operations,
+# - Matplotlib for visualization,
+# - scikit-learn for the dataset, splitting, scaling, and Perceptron,
+# - TensorFlow/Keras for the multilayer perceptron.
+#
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+
+from sklearn.datasets import make_circles
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Perceptron
+from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+
+# Reproducibility
+np.random.seed(42)
+tf.keras.utils.set_random_seed(42)
+
+print("TensorFlow version:", tf.__version__)
+
+# %% [markdown]
+# ## 2. Create a nonlinear dataset
+#
+# `make_circles()` creates two classes arranged as concentric circles.
+#
+# One class is near the center and the other class forms an outer ring.
+#
+# This is useful because a single straight line cannot separate the two classes.
+#
+
+# %%
+X, y = make_circles(
+    n_samples=600,
+    noise=0.08,
+    factor=0.45,
+    random_state=42
+)
+
+print("X shape:", X.shape)
+print("y shape:", y.shape)
+print("First 5 input samples:\n", X[:5])
+print("First 10 target values:", y[:10])
+
+# %% [markdown]
+# ## 3. Visualize the problem
+#
+# Each point has two input features:
+#
+# `x1` and `x2`
+#
+# The target `y` is either class 0 or class 1.
+#
+
+# %%
+plt.figure(figsize=(7, 6))
+plt.scatter(X[:, 0], X[:, 1], c=y, edgecolors="k", alpha=0.8)
+plt.xlabel("x1")
+plt.ylabel("x2")
+plt.title("Nonlinear classification problem: concentric circles")
+plt.grid(alpha=0.2)
+plt.show()
+
+# %% [markdown]
+# ### Discussion
+#
+# A single straight line divides the plane into two half-spaces.
+#
+# But here one class surrounds the other.
+#
+# Therefore, no single linear boundary can perfectly separate the classes.
+#
+#
+
+# %% [markdown]
+# ## 4. Split the data
+#
+# We keep part of the dataset unseen during training.
+#
+# - Training set: used to learn model parameters
+# - Test set: used to evaluate generalization
+#
+
+# %%
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.25,
+    random_state=42,
+    stratify=y
+)
+
+print("Training samples:", len(X_train))
+print("Test samples:", len(X_test))
+
+# %% [markdown]
+# ## 5. Standardize the input features
+#
+# As in Week 2, we fit the scaler using the training data only.
+#
+# Then we apply the same transformation to the test data.
+#
+# This prevents information from the test set from influencing preprocessing.
+
+# %%
+scaler = StandardScaler()
+
+X_train_s = scaler.fit_transform(X_train)
+X_test_s = scaler.transform(X_test)
+
+print("Training mean after scaling:", X_train_s.mean(axis=0))
+print("Training std after scaling:", X_train_s.std(axis=0))
+
+# %% [markdown]
+# # PART A - ONE PERCEPTRON
+#
+# ## 6. Train a Perceptron
+#
+# Recall the basic computation:
+#
+# `z = w^T x + b`
+#
+# A single perceptron creates one linear decision boundary.
+#
+
+# %%
+perceptron = Perceptron(
+    max_iter=1000,
+    tol=1e-3,
+    random_state=42
+)
+
+perceptron.fit(X_train_s, y_train)
+
+print("Learned weights:", perceptron.coef_)
+print("Learned bias:", perceptron.intercept_)
+
+# %% [markdown]
+# ## 7. Evaluate the Perceptron
+#
+# Accuracy tells us the proportion of correct predictions.
+#
+# The confusion matrix lets us inspect the types of predictions in more detail.
+
+# %%
+p_pred = perceptron.predict(X_test_s)
+p_acc = accuracy_score(y_test, p_pred)
+
+print(f"Perceptron test accuracy: {p_acc:.3f}")
+
+p_cm = confusion_matrix(y_test, p_pred)
+
+ConfusionMatrixDisplay(
+    confusion_matrix=p_cm,
+    display_labels=["Class 0", "Class 1"]
+).plot()
+
+plt.title("Perceptron: test confusion matrix")
+plt.show()
+
+# %% [markdown]
+# ## 8. Visualize the Perceptron's decision region
+#
+# We evaluate the model on many points across a fine grid.
+#
+# This allows us to see which parts of the input space the model assigns
+# to class 0 and class 1.
+#
+
+# %%
+def plot_decision_region(model, X_original, y_original, scaler, title,
+                         is_keras=False, threshold=0.5):
+    """Plot binary decision regions in the original x1-x2 coordinate space."""
+
+    x1_min, x1_max = X_original[:, 0].min() - 0.4, X_original[:, 0].max() + 0.4
+    x2_min, x2_max = X_original[:, 1].min() - 0.4, X_original[:, 1].max() + 0.4
+
+    xx, yy = np.meshgrid(
+        np.linspace(x1_min, x1_max, 350),
+        np.linspace(x2_min, x2_max, 350)
+    )
+
+    grid = np.c_[xx.ravel(), yy.ravel()]
+    grid_s = scaler.transform(grid)
+
+    if is_keras:
+        probabilities = model.predict(grid_s, verbose=0).ravel()
+        zz = (probabilities >= threshold).astype(int)
+    else:
+        zz = model.predict(grid_s)
+
+    zz = zz.reshape(xx.shape)
+
+    plt.figure(figsize=(7, 6))
+    plt.contourf(xx, yy, zz, alpha=0.25)
+    plt.scatter(
+        X_original[:, 0],
+        X_original[:, 1],
+        c=y_original,
+        edgecolors="k",
+        alpha=0.8
+    )
+    plt.xlabel("x1")
+    plt.ylabel("x2")
+    plt.title(title)
+    plt.show()
+
+# %%
+plot_decision_region(
+    perceptron,
+    X,
+    y,
+    scaler,
+    "Perceptron decision region"
+)
+
+# %% [markdown]
+# ### Result
+#
+# The boundary is linear.
+#
+# The problem is nonlinear.
+#
+# Changing the slope of ONE line cannot create a closed region around
+# the inner class.
+#
+
+# %% [markdown]
+# # PART B - MULTILAYER PERCEPTRON
+#
+# ## 9. Build a small MLP
+#
+# Architecture:
+#
+# `2 inputs -> 4 hidden neurons -> 1 output`
+#
+# Hidden layer:
+# `Dense(4, activation="relu")`
+#
+# Output layer:
+# `Dense(1, activation="sigmoid")`
+#
+# Parameter count before `summary()`:
+#
+# Layer 1:
+# - weights = 2 x 4 = 8
+# - biases = 4
+# - total = 12
+#
+# Layer 2:
+# - weights = 4 x 1 = 4
+# - bias = 1
+# - total = 5
+#
+# Expected total = 17 trainable parameters
+
+# %%
+tf.keras.backend.clear_session()
+tf.keras.utils.set_random_seed(42)
+
+mlp = tf.keras.Sequential([
+    tf.keras.layers.Input(shape=(2,)),
+    tf.keras.layers.Dense(4, activation="relu", name="hidden_layer"),
+    tf.keras.layers.Dense(1, activation="sigmoid", name="output_layer")
+])
+
+mlp.summary()
+
+# %% [markdown]
+# ## 10. Compile the MLP
+#
+# We use:
+#
+# - Adam optimizer
+# - binary cross-entropy loss
+# - accuracy as an evaluation metric
+#
+# We will study activation functions and loss functions in more detail
+# in Week 4.
+#
+# For today, focus on the architecture and forward computation.
+
+# %%
+mlp.compile(
+    optimizer="adam",
+    loss="binary_crossentropy",
+    metrics=["accuracy"]
+)
+
+# %% [markdown]
+# ## 11. Train the MLP
+#
+# During training, the network adjusts its weights and biases.
+#
+# `validation_split=0.2` keeps part of the training set for validation.
+#
+# Note:
+#
+# Forward propagation computes predictions.
+#
+# Training additionally changes parameters to improve future predictions.
+
+# %%
+history = mlp.fit(
+    X_train_s,
+    y_train,
+    validation_split=0.2,
+    epochs=150,
+    batch_size=32,
+    verbose=0
+)
+
+print("Training complete.")
+
+# %% [markdown]
+# ## 12. Plot training history
+#
+# Compare training and validation performance.
+#
+
+# %%
+plt.figure(figsize=(7, 4))
+plt.plot(history.history["accuracy"], label="Training accuracy")
+plt.plot(history.history["val_accuracy"], label="Validation accuracy")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.title("MLP training history")
+plt.legend()
+plt.show()
+
+# %% [markdown]
+# ## 13. Evaluate the MLP on unseen test samples
+#
+# Now compare the MLP with the Perceptron.
+
+# %%
+mlp_loss, mlp_acc = mlp.evaluate(X_test_s, y_test, verbose=0)
+
+print(f"Perceptron test accuracy: {p_acc:.3f}")
+print(f"MLP test accuracy:        {mlp_acc:.3f}")
+
+# %% [markdown]
+# ## 14. MLP confusion matrix
+#
+# The sigmoid output is a probability-like value between 0 and 1.
+#
+# We use 0.5 as the classification threshold:
+#
+# - output < 0.5 -> class 0
+# - output >= 0.5 -> class 1
+
+# %%
+mlp_prob = mlp.predict(X_test_s, verbose=0).ravel()
+mlp_pred = (mlp_prob >= 0.5).astype(int)
+
+mlp_cm = confusion_matrix(y_test, mlp_pred)
+
+ConfusionMatrixDisplay(
+    confusion_matrix=mlp_cm,
+    display_labels=["Class 0", "Class 1"]
+).plot()
+
+plt.title("MLP: test confusion matrix")
+plt.show()
+
+# %% [markdown]
+# ## 15. Visualize the MLP decision region
+#
+# This is the central visual comparison of today's demo.
+#
+
+# %%
+plot_decision_region(
+    mlp,
+    X,
+    y,
+    scaler,
+    "MLP decision region: 2 -> 4 -> 1",
+    is_keras=True
+)
+
+# %% [markdown]
+# ### Result
+#
+# The individual neurons still perform simple weighted computations.
+#
+# But the hidden layer creates intermediate features and applies
+# nonlinear activation.
+#
+# The output neuron combines these hidden responses.
+#
+# Therefore, the complete network is not restricted to one linear
+# decision boundary.
+
+# %% [markdown]
+# # PART C - LOOK INSIDE THE NETWORK
+#
+# ## 16. Inspect the learned parameters
+#
+# The hidden layer contains a weight matrix and a bias vector.
+#
+# For 2 inputs and 4 hidden neurons:
+#
+# `W1` has shape `(2, 4)`
+#
+# `b1` has shape `(4,)`
+#
+# The output layer then receives the four hidden activations.
+
+# %%
+W1, b1 = mlp.get_layer("hidden_layer").get_weights()
+W2, b2 = mlp.get_layer("output_layer").get_weights()
+
+print("Hidden-layer weights W1:")
+print(W1)
+print("\nHidden-layer bias b1:")
+print(b1)
+
+print("\nOutput-layer weights W2:")
+print(W2)
+print("\nOutput-layer bias b2:")
+print(b2)
+
+print("\nShapes:")
+print("W1:", W1.shape)
+print("b1:", b1.shape)
+print("W2:", W2.shape)
+print("b2:", b2.shape)
+
+# %% [markdown]
+# ## 17. Follow ONE sample through the network manually
+#
+# This cell connects directly to forward propagation:
+#
+# `x -> z1 -> h1 -> z2 -> y_hat`
+#
+# For the hidden layer:
+#
+# `z1 = x W1 + b1`
+#
+# `h1 = ReLU(z1)`
+#
+# For the output:
+#
+# `z2 = h1 W2 + b2`
+#
+# `y_hat = sigmoid(z2)`
+#
+
+# %%
+sample_index = 0
+
+x_sample = X_test_s[sample_index:sample_index + 1]
+true_class = y_test[sample_index]
+
+# Hidden pre-activation
+z1 = x_sample @ W1 + b1
+
+# ReLU
+h1 = np.maximum(0, z1)
+
+# Output pre-activation
+z2 = h1 @ W2 + b2
+
+# Sigmoid
+y_hat_manual = 1 / (1 + np.exp(-z2))
+
+# Keras prediction for comparison
+y_hat_keras = mlp.predict(x_sample, verbose=0)
+
+print("Standardized input x:")
+print(x_sample)
+
+print("\nTrue class:")
+print(true_class)
+
+print("\nHidden pre-activation z1:")
+print(z1)
+
+print("\nHidden activation h1 = ReLU(z1):")
+print(h1)
+
+print("\nOutput pre-activation z2:")
+print(z2)
+
+print("\nManual sigmoid output y_hat:")
+print(y_hat_manual)
+
+print("\nKeras output:")
+print(y_hat_keras)
+
+print("\nPredicted class:")
+print(int(y_hat_keras[0, 0] >= 0.5))
+
+# %% [markdown]
+# ### Forward-pass check
+#
+# The manual result and the Keras result should be almost identical.
+#
+# This demonstrates an important point:
+#
+# A hidden layer is a sequence of defined numerical operations.
+#
+# It consists of weighted sums, biases, and activation functions.
+#
+# The power comes from composing these operations.
+
+# %% [markdown]
+# ## 18. Inspect hidden activations directly
+#
+# We can create a model whose output is the hidden layer.
+#
+# This allows us to see the intermediate representation learned by the MLP.
+
+# %%
+hidden_model = tf.keras.Model(
+    inputs=mlp.inputs,
+    outputs=mlp.get_layer("hidden_layer").output
+)
+
+hidden_values = hidden_model.predict(X_test_s[:10], verbose=0)
+
+print("Hidden activations for the first 10 test samples:")
+print(hidden_values)
+
+# %% [markdown]
+# Questions:
+#
+# 1. Why are some hidden activation values exactly zero?
+# 2. Which activation function causes this?
+# 3. Do all hidden neurons respond in the same way?
+# 4. What does the output neuron receive as its input?
+
+# %% [markdown]
+# # PART D - DOES WIDTH MATTER?
+#
+# ## 19. Train networks with different hidden-layer widths
+#
+# We now change only one architectural choice:
+#
+# the number of hidden neurons.
+#
+# We will compare:
+#
+# `2 -> 1 -> 1`
+#
+# `2 -> 2 -> 1`
+#
+# `2 -> 4 -> 1`
+#
+# `2 -> 16 -> 1`
+#
+
+# %%
+def build_and_train_mlp(hidden_units, epochs=150):
+    tf.keras.backend.clear_session()
+    tf.keras.utils.set_random_seed(42)
+
+    model = tf.keras.Sequential([
+        tf.keras.layers.Input(shape=(2,)),
+        tf.keras.layers.Dense(hidden_units, activation="relu"),
+        tf.keras.layers.Dense(1, activation="sigmoid")
+    ])
+
+    model.compile(
+        optimizer="adam",
+        loss="binary_crossentropy",
+        metrics=["accuracy"]
+    )
+
+    model.fit(
+        X_train_s,
+        y_train,
+        validation_split=0.2,
+        epochs=epochs,
+        batch_size=32,
+        verbose=0
+    )
+
+    _, test_acc = model.evaluate(X_test_s, y_test, verbose=0)
+
+    return model, test_acc
+
+# %%
+widths = [1, 2, 4, 16]
+width_results = {}
+trained_models = {}
+
+for units in widths:
+    model, test_acc = build_and_train_mlp(units)
+    trained_models[units] = model
+    width_results[units] = test_acc
+
+    params = model.count_params()
+
+    print(
+        f"Hidden units: {units:2d} | "
+        f"Parameters: {params:3d} | "
+        f"Test accuracy: {test_acc:.3f}"
+    )
+
+# %% [markdown]
+# ## 20. Compare model width visually
+#
+# First compare test accuracy.
+#
+# Remember:
+#
+# One run on one dataset does NOT prove that one architecture is universally
+# better than another.
+#
+# This experiment is for understanding model capacity.
+
+# %%
+plt.figure(figsize=(7, 4))
+plt.plot(
+    list(width_results.keys()),
+    list(width_results.values()),
+    marker="o"
+)
+plt.xlabel("Number of hidden neurons")
+plt.ylabel("Test accuracy")
+plt.title("Hidden-layer width vs test accuracy")
+plt.xticks(widths)
+plt.ylim(0, 1.05)
+plt.show()
+
+# %% [markdown]
+# ## 21. Compare the learned decision regions
+#
+# Run the next cell several times by changing `units_to_view`.
+#
+# Suggested sequence:
+#
+# 1 -> 2 -> 4 -> 16
+#
+# Ask students to describe how the geometry changes.
+
+# %%
+units_to_view = 1
+
+plot_decision_region(
+    trained_models[units_to_view],
+    X,
+    y,
+    scaler,
+    f"Decision region: 2 -> {units_to_view} -> 1",
+    is_keras=True
+)
+
+# %% [markdown]
+# Change the value above:
+#
+# `units_to_view = 2`
+#
+# then:
+#
+# `units_to_view = 4`
+#
+# then:
+#
+# `units_to_view = 16`
+#
+# Discussion:
+#
+# - Does the boundary become more flexible?
+# - Does more capacity always guarantee better generalization?
+# - What happens to the number of trainable parameters?
+
+# %% [markdown]
+# # PART E - PARAMETER COUNT CHALLENGE
+#
+# ## 22. Derive the parameter-count formula
+#
+# For architecture:
+#
+# `2 inputs -> H hidden neurons -> 1 output`
+#
+# Hidden layer:
+#
+# `(2 x H) + H = 3H`
+#
+# Output layer:
+#
+# `(H x 1) + 1 = H + 1`
+#
+# Total:
+#
+# `3H + H + 1 = 4H + 1`
+#
+
+# %%
+H = 8
+
+expected_parameters = 4 * H + 1
+
+print("Hidden units:", H)
+print("Expected parameter count:", expected_parameters)
+
+check_model = tf.keras.Sequential([
+    tf.keras.layers.Input(shape=(2,)),
+    tf.keras.layers.Dense(H, activation="relu"),
+    tf.keras.layers.Dense(1, activation="sigmoid")
+])
+
+print("Keras parameter count:", check_model.count_params())
+
+# %% [markdown]
+# # 23. Final comparison
+#
+# Complete these statements with the class:
+#
+# Perceptron
+# - one trainable decision unit,
+# - one linear decision boundary,
+# - insufficient for this concentric-circles problem.
+#
+# MLP
+# - contains a hidden layer,
+# - uses nonlinear activation,
+# - learns intermediate representations,
+# - can combine several simple computations into a nonlinear decision function.
+
+# %%
+print("FINAL RESULTS")
+print("-" * 40)
+print(f"Perceptron test accuracy : {p_acc:.3f}")
+print(f"MLP (2 -> 4 -> 1) accuracy: {mlp_acc:.3f}")
+print("-" * 40)
+
+# %% [markdown]
+# # Summary
+#
+# A single perceptron is restricted to a linear decision boundary.
+#
+# An MLP combines multiple neurons with nonlinear activation functions.
+#
+# The hidden layer transforms the original inputs into intermediate
+# representations, allowing the output layer to form a more expressive
+# decision function.
+#
+# An MLP composes learned transformations across layers.
